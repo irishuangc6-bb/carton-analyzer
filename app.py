@@ -41,3 +41,11 @@ def upload():
 
     except Exception as e:
         return f"❌ 错误：{str(e)}", 500
+
+import os
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))   # 从环境变量获取端口，默认5000
+    app.run(debug=False, host='0.0.0.0', port=port)  # 监听所有IP
+
+
