@@ -34,10 +34,40 @@ def upload():
         df_unique = df.drop_duplicates(subset=carton_col)
         counts = df_unique[code_col].value_counts().sort_index()
 
-        result_lines = ["各编号对应的不重复 Carton 数量："]
+                # 映射编号到城市名
+        city_map = {
+            850: "WEST VALLEY", 855: "WEST VALLEY",
+            940: "SAN FRANCISCO", 949: "SAN FRANCISCO",
+            829: "SALT LAKE CITY", 840: "SALT LAKE CITY",
+            920: "SAN DIEGO",
+            890: "LAS VEGAS",
+            932: "BAKERSFIELD",
+            980: "WA", 982: "WA", 983: "WA",
+            970: "OR"
+        }
+
+        result_lines = []
+
         for code, count in counts.items():
-            result_lines.append(f"{code} ：{count}")
-        return "<pre>" + "\n".join(result_lines) + "</pre>"
+            try:
+                code_int = int(code)
+            except:
+                continue  # 忽略无法转换为数字的编号
+
+            city = city_map.get(code_int)
+            if city:
+                result_lines.append(f"{city} {code_int}-{count}")
+
+        # 按城市和编号排序（可选）
+        result_lines.sort()
+
+        # 返回居中格式 HTML
+        return f"""
+        <div style="text-align: center; font-family: monospace; white-space: pre-line;">
+        {'\n'.join(result_lines)}
+        </div>
+        """
+
 
     except Exception as e:
         return f"❌ 错误：{str(e)}", 500
@@ -47,5 +77,6 @@ import os
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))   # 从环境变量获取端口，默认5000
     app.run(debug=False, host='0.0.0.0', port=port)  # 监听所有IP
+
 
 
