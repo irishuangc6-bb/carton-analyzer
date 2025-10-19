@@ -2,6 +2,7 @@ from flask import Flask, request, render_template
 import msoffcrypto
 import io
 import pandas as pd
+import os
 
 app = Flask(__name__)
 
@@ -14,69 +15,106 @@ def index():
 @app.route('/upload', methods=['POST'])
 def upload():
     if 'file' not in request.files:
-        return "没有文件被上传", 400
-    f = request.files['file']
-    filename = f.filename
+        return "❌ 没有文件被上传", 400
+
+    file = request.files['file']
+    filename = file.filename
+
     if not (filename.lower().endswith('.xlsx') or filename.lower().endswith('.xls')):
-        return "请上传 Excel 文件 .xlsx 或 .xls", 400
+        return "❌ 请上传 Excel 文件 (.xlsx 或 .xls)", 400
+
+    file_type = request.form.get('filetype')
+    if file_type not in ['type1', 'type2']:
+        return "❌ 文件类型未选择或无效", 400
 
     try:
-        office_file = msoffcrypto.OfficeFile(f.stream)
-        office_file.load_key(password=PASSWORD)
-        decrypted = io.BytesIO()
-        office_file.decrypt(decrypted)
-        decrypted.seek(0)
-        df = pd.read_excel(decrypted)
+        if file_type == 'type1':
+            # 🔐 处理加密 Excel 文件
+            office_file = msoffcrypto.OfficeFile(file.stream)
+            office_file.load_key(password=PASSWORD)
+            decrypted = io.BytesIO()
+            office_file.decrypt(decrypted)
+            decrypted.seek(0)
+            df = pd.read_excel(decrypted)
 
-        carton_col = df.columns[2]
-        code_col = df.columns[5]
+            carton_col = df.columns[2]
+            code_col = df.columns[5]
 
-        df_unique = df.drop_duplicates(subset=carton_col)
-        counts = df_unique[code_col].value_counts().sort_index()
+            df_unique = df.drop_duplicates(subset=carton_col)
+            counts = df_unique[code_col].value_counts().sort_index()
 
-                # 映射编号到城市名
-        city_map = {
-            850: "WEST VALLEY", 855: "WEST VALLEY",
-            940: "SAN FRANCISCO", 949: "SAN FRANCISCO",
-            829: "SALT LAKE CITY", 840: "SALT LAKE CITY",
-            920: "SAN DIEGO",
-            890: "LAS VEGAS",
-            932: "BAKERSFIELD",
-            980: "WA", 982: "WA", 983: "WA",
-            970: "OR"
-        }
+            city_map = {
+                850: "WEST VALLEY", 855: "WEST VALLEY",
+                940: "SAN FRANCISCO", 949: "SAN FRANCISCO",
+                829: "SALT LAKE CITY", 840: "SALT LAKE CITY",
+                920: "SAN DIEGO",
+                890: "LAS VEGAS",
+                932: "BAKERSFIELD",
+                980: "WA", 982: "WA", 983: "WA",
+                970: "OR"
+            }
 
-        result_lines = []
+            result_lines = []
 
-        for code, count in counts.items():
-            try:
-                code_int = int(code)
-            except:
-                continue  # 忽略无法转换为数字的编号
+            for code, count in counts.items():
+                try:
+                    code_int = int(code)
+                except:
+                    continue
 
-            city = city_map.get(code_int)
-            if city:
-                result_lines.append(f"{city} {code_int}-{count}")
+                city = city_map.get(code_int)
+                if city:
+                    result_lines.append(f"{city} {code_int}-{count}")
 
-        # 按城市和编号排序（可选）
-        result_lines.sort()
+            result_lines.sort()
 
-        # 返回居中格式 HTML
-        return f"""
-        <div style="text-align: center; font-family: monospace; white-space: pre-line;">
-        {'\n'.join(result_lines)}
-        </div>
-        """
+            return f"""
+            <div style="text-align: center; font-family: monospace; white-space: pre-line;">
+            {'\n'.join(result_lines)}
+            </div>
+            """
 
+        elif file_type == 'type2':
+            # 📦 处理非加密大箱尾端格式文件
+            df = pd.read_excel(file.stream, skiprows=9)
+
+            # B列 = df.columns[1]，S列 = df.columns[18]
+            df.iloc[:, 1] = df.iloc[:, 1].fillna(method='ffill')
+
+            carton_col = df.columns[1]  # B列：大箱号
+            tail_col = df.columns[18]  # S列：尾端方式
+
+            df[tail_col] = df[tail_col].astype(str).str.strip().str.upper()
+
+            ags_boxes = 0
+            usps_boxes = 0
+
+            for carton, group in df.groupby(carton_col):
+                unique_tails = set(group[tail_col].dropna().unique())
+                if len(unique_tails) == 1:
+                    tail = list(unique_tails)[0]
+                    if 'AGS' in tail:
+                        ags_boxes += 1
+                    elif 'USPS' in tail:
+                        usps_boxes += 1
+                else:
+                    print(f"⚠️ 大箱 {carton} 出现混合尾端：{unique_tails}（忽略）")
+
+            result_lines = []
+            if ags_boxes > 0:
+                result_lines.append(f"BBC SPX-{ags_boxes}")
+            if usps_boxes > 0:
+                result_lines.append(f"BBC USPS-{usps_boxes}")
+
+            return f"""
+            <div style="text-align: center; font-family: monospace; white-space: pre-line;">
+            {'\n'.join(result_lines)}
+            </div>
+            """
 
     except Exception as e:
-        return f"❌ 错误：{str(e)}", 500
-
-import os
+        return f"❌ 处理错误：{str(e)}", 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))   # 从环境变量获取端口，默认5000
-    app.run(debug=False, host='0.0.0.0', port=port)  # 监听所有IP
-
-
-
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
